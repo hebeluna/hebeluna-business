@@ -425,7 +425,7 @@ function mirrorSale_(id, op) {
   deleteMovRows_(mv, C, 'CRM-VENTA:' + id);
   var s = op.data; if (op.op === 'delete' || !s || VENDIDO.indexOf(s.estado) < 0 || s.loc === 'managua') return;
   (s.items || []).forEach(function (it, n) {
-    var q = num_(it.qty); if (!q) return;
+    var q = num_(it.qty); if (!q || !/^(HB|RS)-\d+$/.test(it.pid || '')) return; // productos por encargo no están en el inventario
     var row = freeMovRow_(mv, C);
     writeMovRow_(mv, C, row, { fecha: s.fecha, pid: it.pid, tipo: tipoSheet_(mv, C, 'venta'), ubic: ubicSheet_(mv, C, s.loc || 'jinotega'), cant: q,
       cobrado: Math.round((q * num_(it.precio) - num_(it.desc)) / q * 100) / 100, nota: (s.num || '') + (s.clienteNombre ? ' · ' + s.clienteNombre : ''),
@@ -475,4 +475,37 @@ function revisar() {
   var mv = sheet_(TABS.mov); var C = movCols_(mv);
   return JSON.stringify({ productos: P.prods.length, costos: P.costs.length, movimientos: M.length, tasa: cfg.tasa,
     tipos: listValues_(mv.getRange(FIRST_ROW, C.tipo + 1)), ubicaciones: listValues_(mv.getRange(FIRST_ROW, C.ubic + 1)), columnasMov: C });
+}
+
+/* Prueba completa sin tocar datos reales: lee, compara stock con el Sheet y hace escrituras de prueba que luego borra */
+function probar() {
+  ensureTabs_();
+  var me = { usuario: 'prueba', isOwner: true, perms: {} };
+  var snap = snapshot_(me); var c = snap.cols;
+  var st = {};
+  (c.products || []).forEach(function (p) { st[p.id] = { j: p.data.base.jinotega, b: p.data.base.bodega }; });
+  (c.movs || []).forEach(function (m) { var d = m.data; if (d.tipo === 'sheet' && st[d.pid]) { st[d.pid].j += d.dj; st[d.pid].b += d.db; } });
+  var bad = [];
+  [TABS.heb, TABS.rs].forEach(function (t) {
+    var sh = sheet_(t); var C = cols_(sh); var v = sh.getRange(FIRST_ROW, 1, sh.getLastRow() - FIRST_ROW + 1, C.n).getValues();
+    v.forEach(function (r) { var id = String(r[C.id] || ''); if (st[id] && (num_(r[C.stL]) !== st[id].j || num_(r[C.stB]) !== st[id].b)) bad.push(id + ' sheet ' + r[C.stL] + '/' + r[C.stB] + ' crm ' + st[id].j + '/' + st[id].b); });
+  });
+  var mv = sheet_(TABS.mov); var C = movCols_(mv); var res = {};
+  function deltaFor(prefix) {
+    var last = mv.getLastRow(); var v = mv.getRange(FIRST_ROW, 1, last - FIRST_ROW + 1, C.n).getValues();
+    for (var i = 0; i < v.length; i++) if (String(v[i][C.origen]).indexOf(prefix) === 0) return [v[i][C.tipo], v[i][C.ubic], v[i][C.cant], v[i][C.dL], v[i][C.dB], v[i][C.id]];
+    return null;
+  }
+  writeMov_('prueba-ajuste', { op: 'set', data: { pid: 'HB-001', tipo: 'ajuste', qty: 1, loc: 'jinotega', fecha: '2026-09-25', nota: 'PRUEBA (se borra sola)' } });
+  SpreadsheetApp.flush(); res.ajuste = deltaFor('CRM:prueba-ajuste');
+  writeMov_('prueba-tras', { op: 'set', data: { pid: 'HB-064', tipo: 'traslado', qty: 1, from: 'bodega', to: 'jinotega', fecha: '2026-09-25', nota: 'PRUEBA' } });
+  SpreadsheetApp.flush(); res.traslado = deltaFor('CRM:prueba-tras');
+  mirrorSale_('prueba-venta', { op: 'set', data: { estado: 'Pagado', loc: 'jinotega', fecha: '2026-09-25', num: 'PRUEBA', items: [{ pid: 'HB-001', qty: 1, precio: 26.3, desc: 0 }] } });
+  SpreadsheetApp.flush(); res.venta = deltaFor('CRM-VENTA:prueba-venta');
+  deleteMovRows_(mv, C, 'CRM:prueba-'); deleteMovRows_(mv, C, 'CRM-VENTA:prueba-'); SpreadsheetApp.flush();
+  res.limpio = !deltaFor('CRM:prueba-') && !deltaFor('CRM-VENTA:prueba-');
+  var out = { productos: (c.products || []).length, costos: (c['data/owner/costs'] || []).length, movimientos: (c.movs || []).length, stockDistinto: bad.slice(0, 10), nStockDistinto: bad.length,
+    tipos: listValues_(mv.getRange(FIRST_ROW, C.tipo + 1)), ubicaciones: listValues_(mv.getRange(FIRST_ROW, C.ubic + 1)), pruebas: res, config: c.config[0].data };
+  console.log(JSON.stringify(out));
+  return out;
 }
