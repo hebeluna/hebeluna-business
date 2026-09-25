@@ -283,6 +283,7 @@ function write_(me, ops) {
       var parts = String(op.path).split('/'); var id = parts.pop(); var col = parts.join('/');
       if (!id || !col) throw new Error('Ruta inválida');
       if (!canWrite_(me, col)) throw new Error('No tienes permiso para cambiar ' + col);
+      if (op.op === 'delete' && !me.isOwner) throw new Error('Solo la dueña puede eliminar registros');
       if (col === 'audit' && op.data) { op.data.owner = !!me.isOwner; op.data.uid = me.usuario; }
       if (col === 'products') return writeProduct_(me, id, op, cfg);
       if (col === 'data/owner/costs') return writeCost_(id, op.data || {});

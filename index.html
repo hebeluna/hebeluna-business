@@ -914,9 +914,11 @@ function saleView(id){
    <label class="f"><span>Entrega</span><select id="sv_ent">${["Retiro en tienda","Envío a domicilio","Entrega en persona"].map(x=>`<option ${(s.entrega||"Retiro en tienda")===x?"selected":""}>${x}</option>`).join("")}</select></label>
    <label class="f"><span>Dirección de entrega</span><input id="sv_dir" value="${h(s.direccion||"")}"></label>
    <button class="btn p" id="sv_save">Actualizar pedido</button>`:""}
-   <button class="btn" id="sv_pdf">Descargar recibo (PDF)</button><button class="btn" id="sv_copy">Copiar recibo para WhatsApp</button>
+   <button class="btn" id="sv_pdf">Descargar recibo (PDF)</button><button class="btn" id="sv_copy">Copiar recibo para WhatsApp</button>${own?`<button class="btn danger" id="sv_del">Eliminar venta / pedido</button><p class="faint" style="font-size:11.5px;margin:0">Solo para ventas hechas por error o de prueba. El inventario vuelve a como estaba y queda registrado en Actividad.</p>`:""}
    ${own?`<div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Utilidad de esta venta</div><b>${usd(saleTotal(s)-saleCOGS(s))}</b> <span class="muted">· margen ${pct(saleTotal(s)?(saleTotal(s)-saleCOGS(s))/saleTotal(s):0)}</span></div>`:""}
    ${s.nota?`<div class="muted">Nota: ${h(s.nota)}</div>`:""}</div></div>`,`<button class="btn" data-x>Cerrar</button>`);
+  const dl=m.querySelector("#sv_del");if(dl){let armed=false;dl.onclick=async()=>{if(!isOwner())return;if(!armed){armed=true;dl.textContent="¿Eliminar "+s.num+"? Toca otra vez para confirmar";return}
+    if(await del("sales/"+s.id,"Venta eliminada","Eliminó venta",`${s.num} · ${usd(saleTotal(s))} · ${(s.items||[]).map(i=>i.qty+"× "+i.nombre).join(", ")}`))closeModal()}}
   const up=m.querySelector("#sv_save");if(up)up.onclick=async()=>{const d={...s};delete d.id;d.estado=val("sv_est");d.pagado=val("sv_pag")===""?null:num(val("sv_pag"));d.entrega=val("sv_ent");d.direccion=val("sv_dir");
    if(VENDIDO.includes(d.estado)&&!VENDIDO.includes(s.estado)){const loc=s.loc||"jinotega";for(const i of s.items){const st=stockOf(i.pid);if(num(i.qty)>st[loc]+(RESERVA.includes(s.estado)?0:0)){toast(`No alcanza ${pname(i.pid)} en ${LOCSHORT[loc]}`);return}}}
    if(await save("sales/"+s.id,d,"Pedido actualizado","Cambió pedido",`${s.num}: ${s.estado} → ${d.estado}${d.pagado!=null?" · pagado "+usd(d.pagado):""}`))closeModal()};
