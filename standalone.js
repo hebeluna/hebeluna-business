@@ -36,14 +36,33 @@
   function load(cols) { store.clear(); Object.keys(cols).forEach(function (c) { cols[c].forEach(function (d) { store.set(c + "/" + d.id, d.data); }); }); }
   async function refresh() { var j = await api("snapshot"); ver = j.ver; load(j.cols); notify(null); }
 
+  /* indicador "Guardando…": se guarda al instante en pantalla y el Sheet se actualiza en segundo plano */
+  function status(t, bad) {
+    var el = document.getElementById("hbm_sync");
+    if (!el) { el = document.createElement("div"); el.id = "hbm_sync"; el.setAttribute("role", "status");
+      el.style.cssText = "position:fixed;left:12px;bottom:12px;z-index:9999;font:12.5px system-ui,sans-serif;padding:6px 12px;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.15);max-width:calc(100vw - 24px)";
+      document.body.appendChild(el); }
+    clearTimeout(el._t);
+    if (!t) { el.hidden = true; return; }
+    el.hidden = false; el.textContent = t;
+    el.style.background = bad ? "#b3261e" : "#fff"; el.style.color = bad ? "#fff" : "#4b4d9a";
+    if (bad) el.onclick = function () { el.hidden = true; };
+    if (!bad && /✓/.test(t)) el._t = setTimeout(function () { el.hidden = true; }, 1800);
+  }
+  function bg(p, label) {
+    p.catch(function (e) { status("No se guardó" + (label ? " (" + label + ")" : "") + ": " + e.message + ". Toca para cerrar.", true); });
+    return Promise.resolve();
+  }
+  window.addEventListener("beforeunload", function (e) { if (pending || queue.length) { e.preventDefault(); e.returnValue = ""; } });
+
   function enqueue(op) {
     if (/^requests\//.test(op.path)) return Promise.resolve();
     return new Promise(function (res, rej) { queue.push({ op: op, res: res, rej: rej }); clearTimeout(flushT); flushT = setTimeout(flush, 120); });
   }
   async function flush() {
-    var batch = queue.splice(0, 40); if (!batch.length) return;
-    pending++;
-    try { var j = await api("write", { ops: batch.map(function (b) { return b.op; }) }); ver = j.ver; batch.forEach(function (b) { b.res(); }); }
+    var batch = queue.splice(0, 60); if (!batch.length) return;
+    pending++; status("Guardando…");
+    try { var j = await api("write", { ops: batch.map(function (b) { return b.op; }) }); ver = j.ver; batch.forEach(function (b) { b.res(); }); if (!queue.length && pending === 1) status("Guardado ✓"); }
     catch (e) { batch.forEach(function (b) { b.rej(e); }); try { await refresh(); } catch (e2) {} }
     finally { pending--; if (queue.length) flush(); }
   }
@@ -60,9 +79,9 @@
   function docRef(path) {
     return {
       get: async function () { var d = store.get(path); return { id: path.split("/").pop(), exists: d !== undefined, data: function () { return clone(d); } }; },
-      set: async function (d) { var prev = store.get(path); store.set(path, clone(d)); notify(colOf(path)); try { await enqueue({ op: "set", path: path, data: d }); } catch (e) { if (prev === undefined) store.delete(path); else store.set(path, prev); notify(colOf(path)); throw e; } },
+      set: async function (d) { store.set(path, clone(d)); notify(colOf(path)); return bg(enqueue({ op: "set", path: path, data: d }), path.split("/")[0]); },
       update: async function (d) { var n = Object.assign({}, store.get(path) || {}, d); return this.set(n); },
-      delete: async function () { store.delete(path); notify(colOf(path)); await enqueue({ op: "delete", path: path }); },
+      delete: async function () { store.delete(path); notify(colOf(path)); return bg(enqueue({ op: "delete", path: path }), "borrar"); },
       onSnapshot: function (cb) { return query(colOf(path), {}).onSnapshot(function () { var d = store.get(path); cb({ id: path.split("/").pop(), exists: d !== undefined, data: function () { return clone(d); } }); }); }
     };
   }
