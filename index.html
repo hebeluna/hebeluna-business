@@ -5,7 +5,7 @@
 <link rel="icon" type="image/png" href="icon.png"><link rel="apple-touch-icon" href="icon.png">
 <link rel="manifest" href="manifest.webmanifest">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
-<script src="config.js?v=202609261500"></script><script src="standalone.js?v=202609261500"></script>
+<script src="config.js?v=202609262200"></script><script src="standalone.js?v=202609262200"></script>
 <title>Hebeluna Business Management</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -950,16 +950,19 @@ function saleView(id){
    <label class="f"><span>Monto pagado (US$)</span><input id="sv_pag" type="number" step="0.01" value="${s.pagado??""}" placeholder="${saleTotal(s).toFixed(2)}"></label>
    <label class="f"><span>Entrega</span><select id="sv_ent">${["Retiro en tienda","Envío a domicilio","Entrega en persona"].map(x=>`<option ${(s.entrega||"Retiro en tienda")===x?"selected":""}>${x}</option>`).join("")}</select></label>
    <label class="f"><span>Dirección de entrega</span><input id="sv_dir" value="${h(s.direccion||"")}"></label>
-   <button class="btn p" id="sv_save">Actualizar pedido</button>`:""}
+   <p class="faint" style="font-size:11.5px;margin:-4px 0 0">El estado se guarda solo al cambiarlo.</p><button class="btn p" id="sv_save">Guardar pago y entrega</button>`:""}
    <button class="btn" id="sv_img">Guardar recibo como imagen</button><button class="btn" id="sv_pdf">Descargar recibo (PDF)</button><button class="btn" id="sv_copy">Copiar recibo para WhatsApp</button>${own?`<button class="btn danger" id="sv_del">Eliminar venta / pedido</button><p class="faint" style="font-size:11.5px;margin:0">Solo para ventas hechas por error o de prueba. El inventario vuelve a como estaba y queda registrado en Actividad.</p>`:""}
    ${own?`<div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Utilidad de esta venta</div><b>${usd(saleTotal(s)-saleCOGS(s))}</b> <span class="muted">· margen ${pct(saleTotal(s)?(saleTotal(s)-saleCOGS(s))/saleTotal(s):0)}</span></div>`:""}
    ${s.nota?`<div class="muted">Nota: ${h(s.nota)}</div>`:""}
    ${(s.items||[]).some(i=>i.from)?`<div class="faint" style="font-size:12px">Se descontó de: ${(s.items||[]).filter(i=>i.from).map(i=>h(i.nombre)+" → "+h(fromTxt(i.from))).join(" · ")}</div>`:""}</div></div>`,`<button class="btn" data-x>Cerrar</button>`);
   const dl=m.querySelector("#sv_del");if(dl){let armed=false;dl.onclick=async()=>{if(!isOwner())return;if(!armed){armed=true;dl.textContent="¿Eliminar "+s.num+"? Toca otra vez para confirmar";return}
     if(await del("sales/"+s.id,"Venta eliminada","Eliminó venta",`${s.num} · ${usd(saleTotal(s))} · ${(s.items||[]).map(i=>i.qty+"× "+i.nombre).join(", ")}`))closeModal()}}
-  const up=m.querySelector("#sv_save");if(up)up.onclick=async()=>{const d={...s};delete d.id;d.estado=val("sv_est");d.pagado=val("sv_pag")===""?null:num(val("sv_pag"));d.entrega=val("sv_ent");d.direccion=val("sv_dir");
+  let cur=s;const doUp=async(close)=>{const s=cur;const d={...s};delete d.id;d.estado=val("sv_est");d.pagado=val("sv_pag")===""?null:num(val("sv_pag"));d.entrega=val("sv_ent");d.direccion=val("sv_dir");
+   if(d.estado===s.estado&&d.pagado===(s.pagado??null)&&d.entrega===(s.entrega||"Retiro en tienda")&&d.direccion===(s.direccion||"")){if(close)closeModal();return}
    if(VENDIDO.includes(d.estado)&&!VENDIDO.includes(s.estado))d.items=allocate((s.items||[]).map(i=>({...i,from:null})),s.loc||"jinotega");
-   if(await save("sales/"+s.id,d,"Pedido actualizado","Cambió pedido",`${s.num}: ${s.estado} → ${d.estado}${d.pagado!=null?" · pagado "+usd(d.pagado):""}`))closeModal()};
+   if(await save("sales/"+s.id,d,close?"Pedido actualizado":"Estado guardado: "+d.estado,"Cambió pedido",`${s.num}: ${s.estado} → ${d.estado}${d.pagado!=null?" · pagado "+usd(d.pagado):""}`)){cur={...d,id:s.id};if(close)closeModal()}};
+  const up=m.querySelector("#sv_save");if(up)up.onclick=()=>doUp(true);
+  const se=m.querySelector("#sv_est");if(se)se.onchange=()=>doUp(false); // el estado se guarda solo al cambiarlo
   m.querySelector("#sv_copy").onclick=async()=>{try{await navigator.clipboard.writeText("```\n"+txt+"\n```");toast("Recibo copiado")}catch(e){const r=document.createRange();r.selectNodeContents($("#rcpt"));const sel=getSelection();sel.removeAllRanges();sel.addRange(r);toast("Selecciona y copia el recibo")}};
   m.querySelector("#sv_pdf").onclick=()=>receiptPDF(s,txt);
   m.querySelector("#sv_img").onclick=()=>receiptPNG(s,txt);
