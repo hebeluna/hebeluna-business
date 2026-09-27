@@ -5,7 +5,7 @@
 <link rel="icon" type="image/png" href="icon.png"><link rel="apple-touch-icon" href="icon.png">
 <link rel="manifest" href="manifest.webmanifest">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
-<script src="config.js?v=202609262200"></script><script src="standalone.js?v=202609262200"></script>
+<script src="config.js?v=202609262230"></script><script src="standalone.js?v=202609262230"></script>
 <title>Hebeluna Business Management</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -933,7 +933,7 @@ function receiptText(s){
   let o=[center(S.cfg.negocio.toUpperCase()),...[S.cfg.ruc?"RUC "+S.cfg.ruc:"",S.cfg.lema,S.cfg.telefono,S.cfg.instagram,(S.cfg.direccion||"").slice(0,W)].filter(Boolean).map(center),line,
    pad("Recibo",s.num),pad("Fecha",fmtD(s.fecha)+" "+(s.ts?new Date(s.ts).toLocaleTimeString("es-NI",{hour:"2-digit",minute:"2-digit"}):"")),pad("Canal",s.canal||""),pad("Estado",s.estado||"")];
   if(c){o.push(line,"Cliente: "+c.nombre);if(c.telefono)o.push("Tel: "+c.telefono);if(c.ciudad)o.push("Ciudad: "+c.ciudad);o.push("Nivel: "+t.t.toUpperCase()+" ("+t.n+" compras)")}
-  if(s.tipo==="preorder"||s.estado==="Pre-order")o.push(line,center("PRE-ORDER"),center("Llega en 8 a 15 días"));
+  if(s.tipo==="preorder"||s.estado==="Pre-order")o.push(line,center("PRE-ORDER"),center(["Enviado","Entregado"].includes(s.estado)?"Ya llegó · "+s.estado:"Llega en 8 a 15 días"));
   if(s.entrega||s.direccion){o.push(line,"Entrega: "+(s.entrega||""));if(s.direccion){const w=("Dirección: "+s.direccion).match(new RegExp(".{1,"+W+"}(\\s|$)","g"))||[];w.forEach(x=>o.push(x.trim()))}}
   o.push(line);(s.items||[]).forEach(i=>{o.push(...wrap(i.nombre));o.push(pad("  "+i.qty+" x "+usd(i.precio),usd(num(i.qty)*num(i.precio))));if(num(i.desc))o.push(pad("  Descuento","-"+usd(i.desc)))});
   o.push(line,pad("Subtotal",usd(saleSub(s))));if(num(s.descuento))o.push(pad("Descuento","-"+usd(s.descuento)));if(num(s.envio))o.push(pad("Envío",usd(s.envio)));
