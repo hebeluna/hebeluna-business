@@ -5,7 +5,7 @@
 <link rel="icon" type="image/png" href="icon.png"><link rel="apple-touch-icon" href="icon.png">
 <link rel="manifest" href="manifest.webmanifest">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
-<script src="config.js?v=202609250022"></script><script src="standalone.js?v=202609250022"></script>
+<script src="config.js?v=202609261500"></script><script src="standalone.js?v=202609261500"></script>
 <title>Hebeluna Business Management</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -113,7 +113,7 @@ tr.click{cursor:pointer}tr.click:hover td{background:var(--surface2)}
 .plist{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;max-height:60vh;overflow:auto}
 .pc{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--surface);cursor:pointer;display:flex;flex-direction:column;gap:4px;text-align:left}
 .pc:hover{border-color:var(--accent)}.pc[disabled]{opacity:.45;cursor:not-allowed}
-.pc .nm{font-weight:600;font-size:13px;line-height:1.25}.pc .mt{font-size:11.5px;color:var(--muted)}
+.pc.out{opacity:.62}.pc .nm{font-weight:600;font-size:13px;line-height:1.25}.pc .mt{font-size:11.5px;color:var(--muted)}
 .cart li{display:grid;grid-template-columns:minmax(0,1fr) 64px 80px 24px;gap:6px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line)}
 .cart ul{list-style:none;margin:0;padding:0}
 .receipt{font-family:var(--mono);font-size:12px;background:#fff;color:#1b1b1b;width:300px;max-width:100%;padding:16px 14px;border-radius:6px;box-shadow:var(--shadow);margin:0 auto;white-space:pre-wrap;line-height:1.5}
@@ -209,10 +209,15 @@ function stockOf(pid){
     else if(m.tipo==="traslado"){st[m.from]=(st[m.from]||0)-q;st[m.to]=(st[m.to]||0)+q}
     else if(m.tipo==="sheet"){st.jinotega+=num(m.dj);st.bodega+=num(m.db)}}
   for(const s of S.sales){if(!s.items)continue;const vend=VENDIDO.includes(s.estado),rsv=RESERVA.includes(s.estado);if(!vend&&!rsv)continue;
-    for(const it of s.items){if(it.pid!==pid)continue;const q=num(it.qty);if(vend)st[s.loc||"jinotega"]=(st[s.loc||"jinotega"]||0)-q;else res+=q}}
+    for(const it of s.items){if(it.pid!==pid)continue;const q=num(it.qty);if(vend){if(it.from)for(const k in it.from)st[k]=(st[k]||0)-num(it.from[k]);else st[s.loc||"jinotega"]=(st[s.loc||"jinotega"]||0)-q}else res+=q}}
   const total=st.jinotega+st.managua+st.bodega;
   return {...st,total,reservado:res,disponible:total-res,transito:num(p&&p.transito)};
 }
+/* Descuenta de donde haya stock: primero la ubicación elegida, luego las demás. Si no alcanza, el resto sale de la ubicación elegida (o Jinotega si es Managua). */
+function allocate(items,loc){const used={};return items.map(it=>{if(!it.pid||!S.products[it.pid])return{...it,from:null};const st=stockOf(it.pid);const u=used[it.pid]||(used[it.pid]={jinotega:0,managua:0,bodega:0});let q=num(it.qty);const from={};
+  for(const k of [loc,...["jinotega","bodega","managua"].filter(k=>k!==loc)]){const t=Math.min(q,Math.max(0,num(st[k])-u[k]));if(t>0){from[k]=t;u[k]+=t;q-=t}}
+  if(q>0){const k=loc==="managua"?"jinotega":loc;from[k]=(from[k]||0)+q;u[k]+=q}return{...it,from}})}
+const fromTxt=f=>f?Object.entries(f).filter(([,q])=>q).map(([k,q])=>q+" "+LOCSHORT[k]).join(" + "):"";
 function estadoProd(p,st){
   if(p.estadoManual==="preorder")return["Pre-order","info"];
   if(st.total<=0)return["Agotado","bad"];
@@ -371,22 +376,23 @@ const negSwitch=()=>`<div class="row" role="group" aria-label="Negocio"><button 
 /* ---- Vender (POS) ---- */
 VIEWS.pos=()=>{
   const q=(S.sub.posq||"").toLowerCase();const m=S.cartMeta;
-  const prods=Object.values(S.products).filter(p=>(p.negocio||"hebeluna")===S.negocio&&p.activo!==false).filter(p=>!q||[p.id,p.marca,p.nombre,p.tono,p.talla,p.sku,p.cat].join(" ").toLowerCase().includes(q)).map(p=>({p,d:stockOf(p.id)[S.cartMeta.loc||"jinotega"]>0?0:1})).sort((x,y)=>x.d-y.d||((x.p.marca||"~")+x.p.nombre).localeCompare((y.p.marca||"~")+y.p.nombre)).map(x=>x.p);
+  const prods=Object.values(S.products).filter(p=>(p.negocio||"hebeluna")===S.negocio&&p.activo!==false).filter(p=>!q||[p.id,p.marca,p.nombre,p.tono,p.talla,p.sku,p.cat].join(" ").toLowerCase().includes(q)).map(p=>({p,d:stockOf(p.id).disponible>0?0:1})).sort((x,y)=>x.d-y.d||((x.p.marca||"~")+x.p.nombre).localeCompare((y.p.marca||"~")+y.p.nombre)).map(x=>x.p);
   const loc=m.loc||"jinotega";
   const cart=S.cart;const sub=cart.reduce((a,i)=>a+num(i.qty)*num(i.precio)-num(i.desc),0);const total=Math.max(0,sub-num(m.descuento)+num(m.envio));
   const custs=Object.values(S.customers).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||""));
   return `<div class="top"><div><div class="eyebrow">Punto de venta</div><h1>Nueva venta</h1></div>${negSwitch()}</div>
   <div class="pos"><div class="card"><div class="row" style="margin-bottom:10px"><input id="posq" placeholder="Buscar por nombre, marca, tono, talla o ID" value="${h(S.sub.posq||"")}" aria-label="Buscar producto"></div>
-  <div class="plist">${prods.slice(0,160).map(p=>{const st=stockOf(p.id);const av=(st[loc]||0)-0;return `<button class="pc" data-add="${h(p.id)}" ${av<=0&&m.tipo!=="preorder"?"disabled":""}><span class="mt">${h(p.id)} · ${h(p.marca||"")}</span><span class="nm">${h(p.nombre)}</span><span class="mt">${h([p.tono,p.talla].filter(Boolean).join(" · "))}</span><span class="row" style="justify-content:space-between"><b>${usd(p.precio)}</b><span class="mt">${av} en ${LOCSHORT[loc]}</span></span></button>`}).join("")||'<div class="empty">Sin resultados</div>'}</div></div>
+  <div class="plist">${prods.slice(0,160).map(p=>{const st=stockOf(p.id);const av=st.disponible;return `<button class="pc${av<=0?" out":""}" data-add="${h(p.id)}" title="${h(["jinotega","managua","bodega"].map(k=>LOCSHORT[k]+": "+st[k]).join(" · "))}"><span class="mt">${h(p.id)} · ${h(p.marca||"")}</span><span class="nm">${h(p.nombre)}</span><span class="mt">${h([p.tono,p.talla].filter(Boolean).join(" · "))}</span><span class="row" style="justify-content:space-between"><b>${usd(p.precio)}</b><span class="mt">${av>0?av+" disponibles":"Sin stock"}</span></span></button>`}).join("")||'<div class="empty">Sin resultados</div>'}</div></div>
   <div class="card cart"><h2>Venta</h2>
    <div class="fields" style="margin-bottom:10px">
-    <label class="f"><span>Sale de</span><select id="c_loc">${Object.keys(LOCS).map(k=>`<option value="${k}" ${loc===k?"selected":""}>${LOCS[k]}</option>`).join("")}</select></label>
+    <label class="f"><span>Se vende desde</span><select id="c_loc">${Object.keys(LOCS).map(k=>`<option value="${k}" ${loc===k?"selected":""}>${LOCS[k]}</option>`).join("")}</select></label>
     <label class="f"><span>Cliente</span><select id="c_cli"><option value="">Sin registrar</option>${custs.map(c=>`<option value="${h(c.id)}" ${m.cli===c.id?"selected":""}>${h(c.nombre)}${c.telefono?" · "+h(c.telefono):""}</option>`).join("")}</select></label>
    </div>
    <div class="fields" style="margin-bottom:8px"><label class="f"><span>Tipo de venta</span><select id="c_tipo"><option value="normal" ${m.tipo!=="preorder"?"selected":""}>Venta normal (en existencia)</option><option value="preorder" ${m.tipo==="preorder"?"selected":""}>Pre-order · abono 50% y 50% al llegar</option></select></label></div>
    ${m.tipo==="preorder"?`<p class="muted" style="font-size:12.5px;margin:0 0 8px">Pre-order: se cobra la mitad ahora y la otra mitad cuando el producto llega (8 a 15 días). No descuenta inventario hasta que lo marques como Pagado o Entregado.</p>`:""}
-   <div class="row" style="margin-bottom:8px"><button class="btn sm" data-act="newcli">+ Cliente nuevo</button><button class="btn sm" data-act="encargo">+ Producto por encargo</button></div>
-   <ul>${cart.map((i,k)=>`<li><div><div style="font-weight:600;font-size:13px">${h(i.nombre||pname(i.pid))}${i.pid?"":' <span class="pill info">encargo</span>'}</div><div class="muted" style="font-size:11.5px">${usd(i.precio)} c/u${num(i.desc)?" · desc. "+usd(i.desc):""}</div></div>
+   <div class="row" style="margin-bottom:8px"><button class="btn sm" data-act="newcli">+ Cliente nuevo</button><button class="btn sm" data-act="encargo">+ Producto fuera de inventario</button></div>
+   <p class="faint" style="font-size:11.5px;margin:0 0 8px">Puedes facturar desde cualquier ubicación: si ahí no hay, el sistema lo descuenta de donde sí haya (Jinotega o Bodega).</p>
+   <ul>${cart.map((i,k)=>`<li><div><div style="font-weight:600;font-size:13px">${h(i.nombre||pname(i.pid))}${i.pid?"":` <span class="pill info">${S.cartMeta.tipo==="preorder"?"por encargo":"fuera de inventario"}</span>`}</div><div class="muted" style="font-size:11.5px">${usd(i.precio)} c/u${num(i.desc)?" · desc. "+usd(i.desc):""}</div></div>
      <input id="q_${k}" type="number" min="1" value="${i.qty}" aria-label="Cantidad" data-cq="${k}"><input id="d_${k}" type="number" min="0" step="0.01" value="${i.desc||""}" placeholder="Desc $" aria-label="Descuento en dólares" data-cd="${k}"><button class="btn ghost sm" data-rm="${k}" aria-label="Quitar">✕</button></li>`).join("")||'<li style="display:block" class="muted">Toca un producto para agregarlo.</li>'}</ul>
    <div class="fields" style="margin-top:10px">
     <label class="f"><span>Descuento general (US$)</span><input id="c_desc" type="number" min="0" step="0.01" value="${m.descuento||""}"></label>
@@ -652,7 +658,7 @@ function invSync(){
   const s=S.sync||{};const P=S.sub.syncPrev;
   if(window.HBM)return `<div class="top"><div><div class="eyebrow">Conectado en vivo</div><h1>Inventario</h1></div></div><!--TABS-->
   <div class="grid g2"><div class="card"><h3>Google Sheet del inventario</h3><p style="font-size:13.5px">En esta versión el <b>Google Sheet es la base de datos</b>: cada venta, movimiento o producto que registras aquí se escribe en el Sheet al instante, y lo que se edita en el Sheet aparece aquí en segundos.</p><a class="btn" href="${h(S.cfg.sheetUrl)}" target="_blank" rel="noopener">Abrir el Sheet</a></div>
-  <div class="card"><h3>Catálogo en Canva</h3><p class="muted" style="font-size:13px">Lo que cambió desde la última actualización del catálogo:</p>${catPendientes()}<div class="row" style="margin-top:10px"><a class="btn" href="${h(S.cfg.canvaUrl)}" target="_blank" rel="noopener">Abrir catálogo en Canva</a><button class="btn" data-act="catsnap">Marcar catálogo como actualizado</button></div></div></div>`;
+  <div class="card"><h3>Catálogo en Canva</h3><p class="muted" style="font-size:13px">Lo que cambió desde la última actualización del catálogo:</p>${catPendientes()}<div class="row" style="margin-top:10px"><a class="btn" href="${h(S.cfg.canvaUrl)}" target="_blank" rel="noopener">Abrir catálogo en Canva</a><button class="btn" data-act="catcopy">Copiar cambios para Claude</button><button class="btn" data-act="catsnap">Marcar catálogo como actualizado</button></div></div></div>`;
   return `<div class="top"><div><div class="eyebrow">El Sheet es la base del inventario · el CRM se alimenta de él</div><h1>Inventario</h1></div></div><!--TABS-->
   <div class="grid g2" style="margin-bottom:14px">
    <div class="card"><h3>Google Sheet del inventario</h3>
@@ -670,7 +676,7 @@ function invSync(){
    <div class="card"><h3>Catálogo en Canva</h3>
     <p class="muted" style="font-size:13px">Lo que cambió en el inventario desde la última vez que se actualizó el catálogo:</p>
     ${catPendientes()}
-    <div class="row" style="margin-top:10px"><a class="btn" href="${h(S.cfg.canvaUrl)}" target="_blank" rel="noopener">Abrir catálogo en Canva</a><button class="btn" data-act="catsnap">Marcar catálogo como actualizado</button></div>
+    <div class="row" style="margin-top:10px"><a class="btn" href="${h(S.cfg.canvaUrl)}" target="_blank" rel="noopener">Abrir catálogo en Canva</a><button class="btn" data-act="catcopy">Copiar cambios para Claude</button><button class="btn" data-act="catsnap">Marcar catálogo como actualizado</button></div>
     <p class="faint" style="font-size:12px;margin-top:8px">Para aplicar estos cambios en Canva, pídeselo a Claude en el proyecto: "actualiza el catálogo". Te muestra la vista previa antes de guardar.</p></div></div>
   ${P?syncPreview(P):""}`;
 }
@@ -687,13 +693,17 @@ function syncPreview(P){
 function catEstado(p){const st=stockOf(p.id);return{precio:num(p.precio),nio:nioOf(p),disp:p.estadoManual==="preorder"?"preorder":st.disponible>0?"si":"agotado"}}
 function catPendientes(){
   const snap=S.catSnap;if(!snap||!snap.items)return`<p class="muted" style="font-size:13px">Todavía no hay un punto de partida. Cuando el catálogo esté al día, toca "Marcar catálogo como actualizado" y desde ahí te aviso qué cambió.</p>`;
+  const L=catList();
+  if(!L.length)return`<p style="font-size:13px"><b>El catálogo está al día</b> <span class="muted">desde el ${fmtD((snap.fecha||"").slice(0,10))}.</span></p>`;
+  return`<div class="tbl" style="max-height:260px;overflow:auto"><table><tbody>${L.map(([id,a,b])=>`<tr><td class="mono">${h(id)}</td><td>${h(pname(id))}<div class="muted" style="font-size:12px">${h(a)}</div></td><td class="muted" style="font-size:12px">${h(b)}</td></tr>`).join("")}</tbody></table></div><p class="muted" style="font-size:12px">${L.length} cambios pendientes desde el ${fmtD((snap.fecha||"").slice(0,10))}.</p>`;
+}
+function catList(){const snap=S.catSnap;if(!snap||!snap.items)return[];
   const L=[];Object.values(S.products).filter(p=>p.activo!==false).forEach(p=>{const a=snap.items[p.id],b=catEstado(p);
     if(!a){L.push([p.id,"Nuevo en inventario",b.disp==="si"?"Agregar al catálogo":""]);return}
     if(a.disp!==b.disp)L.push([p.id,b.disp==="agotado"?"Se agotó":b.disp==="si"?"Volvió a haber":"Ahora es pre-order","Marcar "+(b.disp==="agotado"?"AGOTADO":b.disp==="si"?"disponible":"pre-order")]);
     if(a.precio!==b.precio)L.push([p.id,`Precio ${usd(a.precio)} → ${usd(b.precio)}`,"Cambiar precio y C$"+b.nio.toLocaleString("en-US")])});
   Object.keys(snap.items).filter(id=>!S.products[id]||S.products[id].activo===false).forEach(id=>L.push([id,"Ya no está en inventario","Quitar del catálogo"]));
-  if(!L.length)return`<p style="font-size:13px"><b>El catálogo está al día</b> <span class="muted">desde el ${fmtD((snap.fecha||"").slice(0,10))}.</span></p>`;
-  return`<div class="tbl" style="max-height:260px;overflow:auto"><table><tbody>${L.map(([id,a,b])=>`<tr><td class="mono">${h(id)}</td><td>${h(pname(id))}<div class="muted" style="font-size:12px">${h(a)}</div></td><td class="muted" style="font-size:12px">${h(b)}</td></tr>`).join("")}</tbody></table></div><p class="muted" style="font-size:12px">${L.length} cambios pendientes desde el ${fmtD((snap.fecha||"").slice(0,10))}.</p>`;
+  return L;
 }
 async function readSyncFile(f){
   try{let rowsets=[];
@@ -767,8 +777,31 @@ function userForm(u){
     try{const r=await window.HBM.api("users.save",{user:d});S.sub.users=r.users;audit(isNew?"Creó usuaria":"Editó usuaria",d.usuario);toast("Guardado");closeModal();render()}catch(e){toast(e.message)}};
 }
 function encargoForm(){
-  const m=modal("Producto por encargo",`<p class="muted" style="margin-top:0">Para pre-orders de productos que no están en el inventario.</p><div class="fields"><label class="f"><span>Producto (marca, nombre, tono)</span><input id="en_n" placeholder="Ej. Rare Beauty Soft Pinch Blush · Hope"></label><label class="f"><span>Precio de venta (US$)</span><input id="en_p" type="number" step="0.01" min="0"></label><label class="f"><span>Cantidad</span><input id="en_q" type="number" min="1" value="1"></label></div>`,`<button class="btn" data-x>Cancelar</button><button class="btn p" id="en_s">Agregar</button>`);
-  m.querySelector("#en_s").onclick=()=>{const n=val("en_n"),p=num(val("en_p"));if(!n||!p){toast("Pon el nombre y el precio");return}S.cart.push({pid:"",nombre:n,qty:Math.max(1,num(val("en_q"))),precio:p,desc:0});S.cartMeta.tipo="preorder";closeModal();render()};
+  const pre=S.cartMeta.tipo==="preorder";const own=isOwner();const loc=S.cartMeta.loc||"jinotega";
+  const m=modal("Producto fuera de inventario",`<p class="muted" style="margin-top:0">Para vender algo que no está registrado en el inventario. Puedes solo facturarlo, o de una vez crearlo como producto nuevo.</p>
+   <div class="fields"><label class="f"><span>Marca</span><input id="en_m" placeholder="Ej. Rare Beauty"></label><label class="f"><span>Producto</span><input id="en_n" placeholder="Ej. Soft Pinch Liquid Blush"></label>
+   <label class="f"><span>Tono / talla (opcional)</span><input id="en_t" placeholder="Ej. Hope"></label><label class="f"><span>Precio de venta (US$)</span><input id="en_p" type="number" step="0.01" min="0"></label>
+   <label class="f"><span>Cantidad vendida</span><input id="en_q" type="number" min="1" value="1"></label>${own?`<label class="f"><span>Costo por unidad (US$, opcional)</span><input id="en_c" type="number" step="0.01" min="0"></label>`:""}
+   <label class="f"><span>Tipo</span><select id="en_pre"><option value="0" ${pre?"":"selected"}>Lo tengo y lo entrego (venta normal)</option><option value="1" ${pre?"selected":""}>Por encargo (pre-order)</option></select></label></div>
+   ${can("inventario")?`<div class="card" style="margin-top:12px;padding:12px"><label class="row" style="gap:8px"><input type="checkbox" id="en_add" style="width:auto"> Agregarlo al inventario como producto nuevo</label>
+   <div id="en_more" hidden><div class="fields" style="margin-top:8px"><label class="f"><span>Negocio</span><select id="en_neg"><option value="hebeluna" ${S.negocio!=="rashi"?"selected":""}>Hebeluna</option><option value="rashi" ${S.negocio==="rashi"?"selected":""}>Rashi Studio</option></select></label>
+   <label class="f"><span>Categoría</span><select id="en_cat">${CATS.map(x=>`<option>${x}</option>`).join("")}</select></label>
+   <label class="f"><span>¿Cuántas te quedan después de esta venta?</span><input id="en_rest" type="number" min="0" value="0"></label>
+   <label class="f"><span>Dónde están</span><select id="en_loc">${["jinotega","bodega"].map(k=>`<option value="${k}" ${(loc==="bodega"?"bodega":"jinotega")===k?"selected":""}>${LOCS[k]}</option>`).join("")}</select></label></div>
+   <p class="faint" style="font-size:11.5px;margin:6px 0 0">Se crea en el Sheet con lo vendido + lo que queda, y la venta lo descuenta. Si pones 0, queda Agotado.</p></div></div>`:""}`,
+   `<button class="btn" data-x>Cancelar</button><button class="btn p" id="en_s">Agregar a la venta</button>`);
+  const ck=m.querySelector("#en_add");if(ck)ck.onchange=()=>{m.querySelector("#en_more").hidden=!ck.checked};
+  m.querySelector("#en_s").onclick=async()=>{const marca=val("en_m"),n=val("en_n"),tono=val("en_t"),p=num(val("en_p")),q=Math.max(1,num(val("en_q")));
+    if(!n||!p){toast("Pon el nombre y el precio");return}
+    const costo=val("en_c")===""?null:num(val("en_c"));
+    if(val("en_pre")==="1")S.cartMeta.tipo="preorder";
+    if(ck&&ck.checked){const neg=val("en_neg");const id=nextId(neg==="rashi"?"RS":"HB");const where=val("en_loc");const base={jinotega:0,managua:0,bodega:0};base[where]=q+Math.max(0,num(val("en_rest")));
+      const d={id,negocio:neg,cat:val("en_cat"),marca,nombre:n,tono,talla:"",sku:"",necesita:"No",proveedor:"",precio:p,precioNio:null,fechaIngreso:todayStr(),vence:"",estadoManual:"",nota:"Creado desde una venta",foto:null,activo:true,base,transito:0};
+      S.products[id]={...d};save("products/"+id,d,null,"Creó producto",n+" (desde Vender)");
+      if(own&&costo!=null)save("data/owner/costs/"+id,{costo,envio:0});
+      S.cart.push({pid:id,qty:q,precio:p,desc:0});if(S.cartMeta.tipo!=="preorder")S.cartMeta.loc=where;toast(id+" creado en el inventario");
+    }else S.cart.push({pid:"",nombre:[marca,n,tono].filter(Boolean).join(" · "),qty:q,precio:p,desc:0,costo});
+    closeModal();render()};
 }
 function passForm(){
   const m=modal("Cambiar mi contraseña",`<div class="fields"><label class="f"><span>Contraseña actual</span><input id="pw_a" type="password" autocomplete="current-password"></label><label class="f"><span>Nueva contraseña (mínimo 8)</span><input id="pw_n" type="password" autocomplete="new-password"></label></div>`,`<button class="btn" data-x>Cancelar</button><button class="btn p" id="pw_s">Cambiar</button>`);
@@ -880,10 +913,14 @@ function nextNum(prefix,list,field){const y=todayStr().slice(0,4);let mx=0;list.
 async function checkout(){
   const m=S.cartMeta;const loc=m.loc||"jinotega";
   const pre=m.tipo==="preorder";const estado=m.estado||(pre?"Pre-order":"Entregado");
-  if(!pre&&estado!=="Pre-order")for(const i of S.cart){if(!i.pid)continue;const st=stockOf(i.pid);if(num(i.qty)>st[loc]){toast(`Solo hay ${st[loc]} de ${pname(i.pid)} en ${LOCSHORT[loc]}. Si es por encargo, cambia el tipo a Pre-order.`);return}}
+  if(!pre&&estado!=="Pre-order"){const need={};S.cart.forEach(i=>{if(i.pid)need[i.pid]=(need[i.pid]||0)+num(i.qty)});
+    const falta=Object.keys(need).filter(pid=>need[pid]>stockOf(pid).disponible);
+    if(falta.length&&S.sub.confirmFalta!==falta.join()){S.sub.confirmFalta=falta.join();toast(`${falta.map(pname).join(", ")}: el inventario dice que no alcanza. Toca "Registrar venta" otra vez para facturarlo igual.`);return}}
+  S.sub.confirmFalta="";
   const s={num:nextNum("REC",S.sales,"num"),fecha:todayStr(),ts:new Date().toISOString(),negocio:S.negocio,clienteId:m.cli||"",canal:m.canal||S.cfg.canales[0],metodo:m.metodo||S.cfg.metodos[0],estado,loc,tipo:pre?"preorder":"normal",
-    items:S.cart.map(i=>({pid:i.pid||"",nombre:i.nombre||pname(i.pid),qty:num(i.qty),precio:num(i.precio),desc:num(i.desc),costo:isOwner()?costOf(i.pid):null})),descuento:num(m.descuento),envio:num(m.envio),pagado:m.pagado===""||m.pagado==null?null:num(m.pagado),postId:m.post||"",nota:m.nota||"",entrega:m.entrega||"Retiro en tienda",direccion:(m.direccion??((S.customers[m.cli]||{}).direccion||"")).trim(),uid:S.me.id||""};
+    items:S.cart.map(i=>({pid:i.pid||"",nombre:i.nombre||pname(i.pid),qty:num(i.qty),precio:num(i.precio),desc:num(i.desc),costo:isOwner()?(i.pid?costOf(i.pid):(i.costo??null)):null})),descuento:num(m.descuento),envio:num(m.envio),pagado:m.pagado===""||m.pagado==null?null:num(m.pagado),postId:m.post||"",nota:m.nota||"",entrega:m.entrega||"Retiro en tienda",direccion:(m.direccion??((S.customers[m.cli]||{}).direccion||"")).trim(),uid:S.me.id||""};
   if(pre&&(m.pagado===""||m.pagado==null))s.pagado=Math.round(saleTotal(s)*50)/100;
+  if(VENDIDO.includes(estado))s.items=allocate(s.items,loc);
   s.total=saleTotal(s);const id="S"+Date.now().toString(36)+uid().slice(0,3);
   if(await save("sales/"+id,s,"Venta registrada","Registró venta",`${s.num} · ${usd(s.total)} · ${s.items.map(i=>i.qty+"× "+i.nombre).join(", ")}`)){S.cart=[];S.cartMeta={};render();setTimeout(()=>saleView(id),200)}
 }
@@ -914,16 +951,32 @@ function saleView(id){
    <label class="f"><span>Entrega</span><select id="sv_ent">${["Retiro en tienda","Envío a domicilio","Entrega en persona"].map(x=>`<option ${(s.entrega||"Retiro en tienda")===x?"selected":""}>${x}</option>`).join("")}</select></label>
    <label class="f"><span>Dirección de entrega</span><input id="sv_dir" value="${h(s.direccion||"")}"></label>
    <button class="btn p" id="sv_save">Actualizar pedido</button>`:""}
-   <button class="btn" id="sv_pdf">Descargar recibo (PDF)</button><button class="btn" id="sv_copy">Copiar recibo para WhatsApp</button>${own?`<button class="btn danger" id="sv_del">Eliminar venta / pedido</button><p class="faint" style="font-size:11.5px;margin:0">Solo para ventas hechas por error o de prueba. El inventario vuelve a como estaba y queda registrado en Actividad.</p>`:""}
+   <button class="btn" id="sv_img">Guardar recibo como imagen</button><button class="btn" id="sv_pdf">Descargar recibo (PDF)</button><button class="btn" id="sv_copy">Copiar recibo para WhatsApp</button>${own?`<button class="btn danger" id="sv_del">Eliminar venta / pedido</button><p class="faint" style="font-size:11.5px;margin:0">Solo para ventas hechas por error o de prueba. El inventario vuelve a como estaba y queda registrado en Actividad.</p>`:""}
    ${own?`<div class="card" style="padding:10px"><div class="muted" style="font-size:12px">Utilidad de esta venta</div><b>${usd(saleTotal(s)-saleCOGS(s))}</b> <span class="muted">· margen ${pct(saleTotal(s)?(saleTotal(s)-saleCOGS(s))/saleTotal(s):0)}</span></div>`:""}
-   ${s.nota?`<div class="muted">Nota: ${h(s.nota)}</div>`:""}</div></div>`,`<button class="btn" data-x>Cerrar</button>`);
+   ${s.nota?`<div class="muted">Nota: ${h(s.nota)}</div>`:""}
+   ${(s.items||[]).some(i=>i.from)?`<div class="faint" style="font-size:12px">Se descontó de: ${(s.items||[]).filter(i=>i.from).map(i=>h(i.nombre)+" → "+h(fromTxt(i.from))).join(" · ")}</div>`:""}</div></div>`,`<button class="btn" data-x>Cerrar</button>`);
   const dl=m.querySelector("#sv_del");if(dl){let armed=false;dl.onclick=async()=>{if(!isOwner())return;if(!armed){armed=true;dl.textContent="¿Eliminar "+s.num+"? Toca otra vez para confirmar";return}
     if(await del("sales/"+s.id,"Venta eliminada","Eliminó venta",`${s.num} · ${usd(saleTotal(s))} · ${(s.items||[]).map(i=>i.qty+"× "+i.nombre).join(", ")}`))closeModal()}}
   const up=m.querySelector("#sv_save");if(up)up.onclick=async()=>{const d={...s};delete d.id;d.estado=val("sv_est");d.pagado=val("sv_pag")===""?null:num(val("sv_pag"));d.entrega=val("sv_ent");d.direccion=val("sv_dir");
-   if(VENDIDO.includes(d.estado)&&!VENDIDO.includes(s.estado)){const loc=s.loc||"jinotega";for(const i of s.items){const st=stockOf(i.pid);if(num(i.qty)>st[loc]+(RESERVA.includes(s.estado)?0:0)){toast(`No alcanza ${pname(i.pid)} en ${LOCSHORT[loc]}`);return}}}
+   if(VENDIDO.includes(d.estado)&&!VENDIDO.includes(s.estado))d.items=allocate((s.items||[]).map(i=>({...i,from:null})),s.loc||"jinotega");
    if(await save("sales/"+s.id,d,"Pedido actualizado","Cambió pedido",`${s.num}: ${s.estado} → ${d.estado}${d.pagado!=null?" · pagado "+usd(d.pagado):""}`))closeModal()};
   m.querySelector("#sv_copy").onclick=async()=>{try{await navigator.clipboard.writeText("```\n"+txt+"\n```");toast("Recibo copiado")}catch(e){const r=document.createRange();r.selectNodeContents($("#rcpt"));const sel=getSelection();sel.removeAllRanges();sel.addRange(r);toast("Selecciona y copia el recibo")}};
   m.querySelector("#sv_pdf").onclick=()=>receiptPDF(s,txt);
+  m.querySelector("#sv_img").onclick=()=>receiptPNG(s,txt);
+}
+async function receiptPNG(s,txt){
+  try{const lines=txt.split("\n");const Wpx=720,pad=44;const c=document.createElement("canvas");const x=c.getContext("2d");
+    const mono='"SFMono-Regular",Menlo,Consolas,"Courier New",monospace';let fs=30;x.font=fs+"px "+mono;const cw=x.measureText("M".repeat(32)).width;fs=Math.floor(fs*(Wpx-2*pad)/cw);
+    const lh=Math.round(fs*1.5);const logo=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src=LOGO_JPG});
+    const lw=260,lhgt=logo?Math.round(lw*logo.height/logo.width):0;const top=14+28+lhgt+24;
+    c.width=Wpx;c.height=top+lines.length*lh+pad;x.fillStyle="#ffffff";x.fillRect(0,0,c.width,c.height);x.fillStyle="#9A9CEA";x.fillRect(0,0,c.width,14);
+    if(logo)x.drawImage(logo,(Wpx-lw)/2,42,lw,lhgt);x.textBaseline="top";
+    lines.forEach((l,i)=>{const b=i===0||/TOTAL|Nivel|PRE-ORDER|Saldo/.test(l);x.font=(b?"bold ":"")+(i===0?Math.round(fs*1.15):fs)+"px "+mono;x.fillStyle=/^-+$/.test(l)?"#A2B9EE":"#1b1b1b";x.fillText(l,pad,top+i*lh)});
+    const blob=await new Promise(r=>c.toBlob(r,"image/png"));const file=new File([blob],s.num+".png",{type:"image/png"});
+    if(navigator.canShare&&navigator.canShare({files:[file]})&&/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)){try{await navigator.share({files:[file],title:"Recibo "+s.num});return}catch(e){if(e&&e.name==="AbortError")return}}
+    if(downloads){await downloads.save({filename:s.num+".png",data:blob});toast("Recibo guardado como imagen")}
+    else{const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=s.num+".png";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)}
+  }catch(e){if(!e||e.code!=="declined")toast("No se pudo crear la imagen: "+(e&&e.message||e))}
 }
 async function receiptPDF(s,txt){
   if(!window.jspdf||!downloads){toast("La descarga no está disponible en esta vista");return}
@@ -1040,7 +1093,7 @@ document.addEventListener("click",async e=>{
   if(d.post){postForm(S.posts.find(p=>p.id===d.post));return}
   if(d.role){const [id,a]=d.role.split("|");if(a==="edit"){roleEdit(id);return}const r={...(S.roles[id]||{perms:{vender:true,pedidos:true,clientes:true,catalogo:true},rol:"vendedora",nombre:(S.reqs[id]||{}).nombre||"",email:(S.reqs[id]||{}).email||""}),activo:a==="on"};await save("roles/"+id,r,a==="on"?"Acceso activado":"Acceso desactivado");return}
   switch(d.act){
-   case"newprod":prodForm();break;case"encargo":encargoForm();break;case"quickord":go("comp");setTimeout(()=>ordForm(),50);break;case"quickgasto":go("fin");setTimeout(()=>gastoForm(),50);break;case"mov":movForm();break;case"newcli":cliForm(null,id=>{S.cartMeta.cli=id;render()});break;case"checkout":checkout();break;
+   case"newprod":prodForm();break;case"encargo":encargoForm();break;case"catcopy":{const L=catList();if(!L.length){toast("No hay cambios pendientes para el catálogo");break}const t="Actualiza el Catálogo Hebeluna 2026 en Canva con estos cambios:\n"+L.map(([id,a,b])=>`- ${pname(id)} (${id}): ${a} → ${b}`).join("\n");navigator.clipboard.writeText(t).then(()=>toast("Copiado. Pégalo en el chat con Claude")).catch(()=>toast("No se pudo copiar"));break}case"quickord":go("comp");setTimeout(()=>ordForm(),50);break;case"quickgasto":go("fin");setTimeout(()=>gastoForm(),50);break;case"mov":movForm();break;case"newcli":cliForm(null,id=>{S.cartMeta.cli=id;render()});break;case"checkout":checkout();break;
    case"neword":ordForm();break;case"newgasto":gastoForm();break;case"newpost":postForm();break;case"export":exportXlsx();break;
    case"syncpaste":{const t=val("sync_paste");if(!t){toast("Pega primero la hoja copiada");break}const r=parseSheetRows(t.split(/\r?\n/).map(l=>l.split("\t")));S.sub.syncPrev=r.err?{err:r.err}:{n:r.items.length,ch:diffSheet(r.items)};render();break}
    case"syncapply":await applySync();break;case"newuser":userForm();break;case"logout":window.HBM&&window.HBM.logout();break;case"mypass":passForm();break;case"syncall":(S.sub.syncPrev.ch||[]).forEach(c=>c.off=false);render();break;case"syncnone":(S.sub.syncPrev.ch||[]).forEach(c=>c.off=true);render();break;case"catsnap":await catSnapshot();break;
