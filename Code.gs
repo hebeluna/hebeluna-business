@@ -278,26 +278,31 @@ function canWrite_(me, col) {
 function write_(me, ops) {
   var lock = LockService.getScriptLock(); lock.waitLock(25000);
   try {
-    var datos = null; var cfg = cfgSheet_();
+    var datos = null; var cfg = null;
+    var getIdx = function () { return datos = datos || datosIndex_(); };
     ops.forEach(function (op) {
       var parts = String(op.path).split('/'); var id = parts.pop(); var col = parts.join('/');
       if (!id || !col) throw new Error('Ruta inválida');
       if (!canWrite_(me, col)) throw new Error('No tienes permiso para cambiar ' + col);
       if (op.op === 'delete' && !me.isOwner) throw new Error('Solo la dueña puede eliminar registros');
       if (col === 'audit' && op.data) { op.data.owner = !!me.isOwner; op.data.uid = me.usuario; }
-      if (col === 'products') return writeProduct_(me, id, op, cfg);
+      if (col === 'products') return writeProduct_(me, id, op, cfg || (cfg = cfgSheet_()), getIdx);
       if (col === 'data/owner/costs') return writeCost_(id, op.data || {});
       if (col === 'movs' && !isManagua_(op.data)) return writeMov_(id, op);
       if (col === 'sales') mirrorSale_(id, op);
       if (col === 'config' && id === 'main' && op.data) writeCfgSheet_(op.data);
       if (col === 'roles') return; // se manejan con users.save
-      datos = datos || datosIndex_();
-      upsertDatos_(datos, col, id, op.op === 'delete' ? null : op.data, me);
+      upsertDatos_(getIdx(), col, id, op.op === 'delete' ? null : op.data, me);
     });
     return { ok: true, ver: bump_() };
   } finally { lock.releaseLock(); }
 }
-function datosIndex_() { var m = {}; datosAll_().forEach(function (x) { m[x.col + '\u0001' + x.id] = x.row; }); return m; }
+function datosIndex_() {
+  var d = sheet_(TABS.datos); var last = d.getLastRow(); var m = {};
+  if (last < 2) return m;
+  d.getRange(2, 1, last - 1, 2).getValues().forEach(function (r, i) { if (r[0]) m[r[0] + '\u0001' + r[1]] = i + 2; });
+  return m;
+}
 function upsertDatos_(idx, col, id, data, me) {
   var d = sheet_(TABS.datos); var key = col + '\u0001' + id; var row = idx[key];
   if (data === null) { if (row) { d.deleteRow(row); for (var k in idx) if (idx[k] > row) idx[k]--; delete idx[key]; } return; }
@@ -314,7 +319,7 @@ function findProductRow_(id) {
   for (var i = 0; i < ids.length; i++) { var v = String(ids[i][0] || '').trim(); if (v === id) return { sh: sh, C: C, row: FIRST_ROW + i }; if (/^(HB|RS)-\d+$/.test(v)) lastId = FIRST_ROW + i; }
   return { sh: sh, C: C, row: 0, lastId: lastId };
 }
-function writeProduct_(me, id, op, cfg) {
+function writeProduct_(me, id, op, cfg, getIdx) {
   var d = op.data || {};
   var f = findProductRow_(id); var sh = f.sh, C = f.C, row = f.row;
   if (op.op === 'delete') { d = { activo: false }; }
@@ -328,10 +333,15 @@ function writeProduct_(me, id, op, cfg) {
     if (d.base) { sh.getRange(row, C.iniL + 1).setValue(num_(d.base.jinotega)); sh.getRange(row, C.iniB + 1).setValue(num_(d.base.bodega)); }
   }
   if (row && op.op !== 'delete') {
-    var set = function (k, v) { if (C[k] >= 0 && v !== undefined) sh.getRange(row, C[k] + 1).setValue(v === null ? '' : v); };
+    var cur = sh.getRange(row, 1, 1, C.n).getValues()[0];
+    var set = function (k, v) {
+      if (C[k] < 0 || v === undefined) return; v = v === null ? '' : v;
+      if (String(cur[C[k]]) === String(v)) return; // sin cambios: no escribir (mucho más rápido)
+      sh.getRange(row, C[k] + 1).setValue(v);
+    };
     set('cat', d.cat); set('marca', d.marca); set('nombre', d.nombre); set('tono', d.tono); set('talla', d.talla);
     set('necesita', d.necesita || 'No'); set('sku', d.sku); set('precio', d.precio != null ? num_(d.precio) : undefined); set('nota', d.nota);
-    if (C.precioN >= 0 && d.precioNio !== undefined) {
+    if (C.precioN >= 0 && d.precioNio !== undefined && !(d.precioNio && num_(cur[C.precioN]) === num_(d.precioNio))) {
       var cell = sh.getRange(row, C.precioN + 1);
       if (d.precioNio) cell.setValue(num_(d.precioNio));
       else if (!cell.getFormula()) { var src = findFormulaRow_(sh, C.precioN + 1, row); if (src) sh.getRange(src, C.precioN + 1).copyTo(cell, SpreadsheetApp.CopyPasteType.PASTE_FORMULA, false); }
@@ -340,7 +350,7 @@ function writeProduct_(me, id, op, cfg) {
   // lo que el Sheet no tiene va a prodx
   var extra = {}; ['proveedor', 'fechaIngreso', 'vence', 'estadoManual', 'foto', 'activo', 'transito'].forEach(function (k) { if (d[k] !== undefined) extra[k] = d[k]; });
   if (Object.keys(extra).length) {
-    var idx = datosIndex_(); var prev = {};
+    var idx = getIdx ? getIdx() : datosIndex_(); var prev = {};
     var r = idx['prodx\u0001' + id]; if (r) prev = JSON.parse(sheet_(TABS.datos).getRange(r, 3).getValue() || '{}');
     for (var k in extra) prev[k] = extra[k];
     upsertDatos_(idx, 'prodx', id, prev, me);
@@ -423,14 +433,21 @@ function writeMov_(id, op) {
 var VENDIDO = ['Pagado', 'Preparando', 'Listo', 'Enviado', 'Entregado'];
 function mirrorSale_(id, op) {
   var mv = sheet_(TABS.mov); var C = movCols_(mv);
-  deleteMovRows_(mv, C, 'CRM-VENTA:' + id);
-  var s = op.data; if (op.op === 'delete' || !s || VENDIDO.indexOf(s.estado) < 0 || s.loc === 'managua') return;
+  deleteMovRows_(mv, C, 'CRM-VENTA:' + id + ':');
+  var s = op.data; if (op.op === 'delete' || !s || VENDIDO.indexOf(s.estado) < 0) return;
+  var nota = (s.num || '') + (s.clienteNombre ? ' · ' + s.clienteNombre : '') + (s.loc === 'managua' ? ' · vendido en Managua' : '');
   (s.items || []).forEach(function (it, n) {
-    var q = num_(it.qty); if (!q || !/^(HB|RS)-\d+$/.test(it.pid || '')) return; // productos por encargo no están en el inventario
-    var row = freeMovRow_(mv, C);
-    writeMovRow_(mv, C, row, { fecha: s.fecha, pid: it.pid, tipo: tipoSheet_(mv, C, 'venta'), ubic: ubicSheet_(mv, C, s.loc || 'jinotega'), cant: q,
-      cobrado: Math.round((q * num_(it.precio) - num_(it.desc)) / q * 100) / 100, nota: (s.num || '') + (s.clienteNombre ? ' · ' + s.clienteNombre : ''),
-      origen: 'CRM-VENTA:' + id + ':' + n });
+    var q = num_(it.qty); if (!q || !/^(HB|RS)-\d+$/.test(it.pid || '')) return; // productos fuera de inventario no van al Sheet
+    var cobrado = Math.round((q * num_(it.precio) - num_(it.desc)) / q * 100) / 100;
+    // it.from = de qué ubicación salió cada unidad (el CRM lo decide según dónde haya stock)
+    var from = it.from || (s.loc === 'managua' ? null : (function () { var o = {}; o[s.loc || 'jinotega'] = q; return o; })());
+    if (!from) return; // ventas viejas de Managua (antes de este cambio) no tocaban el Sheet
+    Object.keys(from).forEach(function (loc) {
+      var cant = num_(from[loc]); if (!cant || loc === 'managua') return; // Managua no existe en el Sheet
+      var row = freeMovRow_(mv, C);
+      writeMovRow_(mv, C, row, { fecha: s.fecha, pid: it.pid, tipo: tipoSheet_(mv, C, 'venta'), ubic: ubicSheet_(mv, C, loc), cant: cant,
+        cobrado: cobrado, nota: nota, origen: 'CRM-VENTA:' + id + ':' + n + ':' + loc });
+    });
   });
 }
 function writeCfgSheet_(d) {
@@ -503,6 +520,8 @@ function probar() {
   SpreadsheetApp.flush(); res.traslado = deltaFor('CRM:prueba-tras');
   mirrorSale_('prueba-venta', { op: 'set', data: { estado: 'Pagado', loc: 'jinotega', fecha: '2026-09-25', num: 'PRUEBA', items: [{ pid: 'HB-001', qty: 1, precio: 26.3, desc: 0 }] } });
   SpreadsheetApp.flush(); res.venta = deltaFor('CRM-VENTA:prueba-venta');
+  mirrorSale_('prueba-mga', { op: 'set', data: { estado: 'Entregado', loc: 'managua', fecha: '2026-09-25', num: 'PRUEBA', items: [{ pid: 'HB-064', qty: 1, precio: 10, desc: 0, from: { bodega: 1 } }] } });
+  SpreadsheetApp.flush(); res.ventaManaguaDesdeBodega = deltaFor('CRM-VENTA:prueba-mga');
   deleteMovRows_(mv, C, 'CRM:prueba-'); deleteMovRows_(mv, C, 'CRM-VENTA:prueba-'); SpreadsheetApp.flush();
   res.limpio = !deltaFor('CRM:prueba-') && !deltaFor('CRM-VENTA:prueba-');
   var out = { productos: (c.products || []).length, costos: (c['data/owner/costs'] || []).length, movimientos: (c.movs || []).length, stockDistinto: bad.slice(0, 10), nStockDistinto: bad.length,
